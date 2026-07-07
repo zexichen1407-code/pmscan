@@ -150,45 +150,6 @@ def sort_asks(book: dict[str, Any]) -> list[tuple[float, float, str]]:
     return out
 
 
-def sort_bids(book: dict[str, Any]) -> list[tuple[float, float]]:
-    bids = book.get("bids") or []
-    out: list[tuple[float, float]] = []
-    for row in bids:
-        p = as_float(row.get("price"))
-        s = as_float(row.get("size"))
-        if p is not None and s is not None and s > 0:
-            out.append((p, s))
-    out.sort(key=lambda x: x[0], reverse=True)
-    return out
-
-
-def effective_no_asks(
-    no_book: dict[str, Any] | None,
-    yes_book: dict[str, Any] | None,
-) -> list[tuple[float, float, str]]:
-    # A YES bid implies equivalent taker NO liquidity at 1 - YES bid.
-    # At the same effective price this may be a mirrored order, so keep max size.
-    by_price: dict[float, tuple[float, str]] = {}
-    for price, size, source in sort_asks(no_book or {}):
-        key = round(price, 6)
-        prev = by_price.get(key)
-        if prev is None or size > prev[0]:
-            by_price[key] = (size, source)
-    for yes_bid, size in sort_bids(yes_book or {}):
-        price = round(1.0 - yes_bid, 6)
-        if price <= 0 or price >= 1:
-            continue
-        prev = by_price.get(price)
-        source = "synthetic_from_yes_bid"
-        if prev is None or size > prev[0]:
-            by_price[price] = (size, source)
-        elif prev is not None and prev[1] != source:
-            by_price[price] = (prev[0], "direct_or_synthetic")
-    out = [(price, size, source) for price, (size, source) in by_price.items()]
-    out.sort(key=lambda x: x[0])
-    return out
-
-
 def consume_asks(asks: list[tuple[float, float, str]], shares: float, max_price: float) -> dict[str, Any] | None:
     need = shares
     notional = 0.0
@@ -442,7 +403,7 @@ class Engine:
     def attach_books(self, legs: list[Leg]) -> list[Leg]:
         book_ok: list[Leg] = []
         books: dict[str, dict[str, Any]] = {}
-        tokens = sorted({token for leg in legs for token in (leg.no_token, leg.yes_token) if token})
+        tokens = sorted({leg.no_token for leg in legs if leg.no_token})
         with ThreadPoolExecutor(max_workers=max(1, self.args.book_workers)) as ex:
             futs = {ex.submit(fetch_book_quick, self.session, token): token for token in tokens}
             for fut in as_completed(futs):
@@ -452,7 +413,7 @@ class Engine:
                     books[token] = book
 
         for leg in legs:
-            leg.no_asks = effective_no_asks(books.get(leg.no_token), books.get(leg.yes_token))
+            leg.no_asks = sort_asks(books.get(leg.no_token) or {})
             if leg.no_asks:
                 book_ok.append(leg)
 
@@ -683,18 +644,6 @@ class Engine:
             raise RuntimeError(f"live trading disabled for kind={candidate.kind}")
         if candidate.max_notional > self.args.max_notional:
             raise RuntimeError("candidate exceeds max notional")
-        if not self.args.allow_synthetic_live:
-            synthetic = [
-                p["leg"]
-                for p in candidate.plans
-                if (p.get("route_summary") or {}).get("synthetic_from_yes_bid", 0) > 0
-            ]
-            if synthetic:
-                raise RuntimeError(
-                    "live blocked: candidate uses YES-bid-derived NO liquidity; rerun with "
-                    "--allow-synthetic-live only after execution-path validation"
-                )
-
         from py_clob_client_v2.clob_types import (
             AssetType,
             BalanceAllowanceParams,
@@ -793,7 +742,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-subset-print", type=int, default=3)
     p.add_argument("--live", action="store_true")
     p.add_argument("--confirm-live", default="")
-    p.add_argument("--allow-synthetic-live", action="store_true")
     p.add_argument("--skip-balance-check", action="store_true")
     p.add_argument("--stop-after-live", action="store_true", default=True)
     p.add_argument("--env", default=str(DEFAULT_ENV))

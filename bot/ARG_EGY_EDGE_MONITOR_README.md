@@ -1,5 +1,7 @@
 # 阿根廷 vs 埃及比分盘 edge 监控
 
+注意：根目录 `README.md` 保持项目主说明；这个文件才是 `edge监控` 分支里针对实时 edge 监控程序的专用说明。
+
 这个文档只解释 `arg_egy_exact_score_edge_monitor.py` 这个实时监控程序。
 
 它不是交易引擎，不会下单，也不会自动 convert/merge。它只做一件事：持续监控指定 Polymarket 多比分市场，计算“买齐所有 NO 后是否有 full-set convert 套利空间”。

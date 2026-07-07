@@ -1,0 +1,30 @@
+# Secrets and local credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python cache and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Runtime logs and process output
+*.log
+*.out
+*.err
+*.jsonl
+bot/*_run*.txt
+audit/_cand_log.txt
+
+# Generated market snapshots and research data
+*.pkl
+*.csv
+*.parquet
+*.sqlite
+*.db
+*.json

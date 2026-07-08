@@ -98,6 +98,28 @@ def customize_dashboard_html(html: str) -> str:
 """,
         "",
     )
+    html = html.replace(
+        """        if (high.i === low.i) {
+          drawEdgePercentMarker(high, 'High/Low', '#f5c84c', true);
+        } else {
+          drawEdgePercentMarker(high, 'High', '#40d17d', true);
+          drawEdgePercentMarker(low, 'Low', '#ff6b6b', false);
+        }
+""",
+        """        function edgeMarkerColor(row) {
+          const edge = Number(row && row.p ? row.p.edge : 0);
+          if (edge > 0) return '#40d17d';
+          if (edge < 0) return '#ff6b6b';
+          return '#f5c84c';
+        }
+        if (high.i === low.i) {
+          drawEdgePercentMarker(high, 'High/Low', edgeMarkerColor(high), true);
+        } else {
+          drawEdgePercentMarker(high, 'High', edgeMarkerColor(high), true);
+          drawEdgePercentMarker(low, 'Low', edgeMarkerColor(low), false);
+        }
+""",
+    )
     return html
 
 

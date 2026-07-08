@@ -185,8 +185,31 @@ def load_event_by_slug(session: requests.Session, slug: str) -> dict[str, Any] |
     return None
 
 
-def load_recent_events(session: requests.Session, slugs: list[str]) -> list[dict[str, Any]]:
+def event_active_no_market_count(event: dict[str, Any]) -> int:
+    active = 0
+    for market in event.get("markets") or []:
+        outcomes = edgeui.jloads(market.get("outcomes"), [])
+        tokens = edgeui.jloads(market.get("clobTokenIds"), [])
+        if len(outcomes) != 2 or len(tokens) != 2:
+            continue
+        if not any(str(outcome).strip().lower() == "no" for outcome in outcomes):
+            continue
+        if not (as_bool(market.get("acceptingOrders")) and as_bool(market.get("enableOrderBook"))):
+            continue
+        if as_bool(market.get("closed")):
+            continue
+        active += 1
+    return active
+
+
+def load_recent_events(
+    session: requests.Session,
+    slugs: list[str],
+    count: int,
+) -> tuple[list[dict[str, Any]], int, int]:
     events: list[dict[str, Any]] = []
+    skipped_closed = 0
+    skipped_non_neg_risk = 0
     for slug in slugs:
         try:
             event = load_event_by_slug(session, slug)
@@ -195,9 +218,15 @@ def load_recent_events(session: requests.Session, slugs: list[str]) -> list[dict
         if not event:
             continue
         if not as_bool(event.get("negRisk")):
+            skipped_non_neg_risk += 1
+            continue
+        if event_active_no_market_count(event) <= 0:
+            skipped_closed += 1
             continue
         events.append(event)
-    return events
+        if len(events) >= count:
+            break
+    return events, skipped_closed, skipped_non_neg_risk
 
 
 @dataclass
@@ -294,8 +323,9 @@ def scan_penny_recent_markets(
 ) -> dict[str, Any]:
     started = time.time()
     session = make_session("pmscan-penny-recent-events/0.1")
-    slugs = latest_distinct_event_slugs(trades, args.market_count)
-    events = load_recent_events(session, slugs)
+    candidate_count = max(args.market_count, args.candidate_market_count)
+    slugs = latest_distinct_event_slugs(trades, candidate_count)
+    events, skipped_closed, skipped_non_neg_risk = load_recent_events(session, slugs, args.market_count)
     slug_to_recent_rank = {slug: i + 1 for i, slug in enumerate(slugs)}
 
     rows: list[dict[str, Any]] = []
@@ -315,6 +345,9 @@ def scan_penny_recent_markets(
             rows.append(future.result())
 
     rows.sort(key=lambda item: item.get("rank", 999999))
+    for display_rank, row in enumerate(rows, 1):
+        row["recent_trade_rank"] = row.get("rank")
+        row["rank"] = display_rank
     complete = [row for row in rows if row.get("status") == "complete" and row.get("edge") is not None]
     positive = [row for row in complete if (row.get("edge") or 0.0) > 0]
     best = max(complete, key=lambda item: item.get("edge") or -999999.0) if complete else None
@@ -349,7 +382,10 @@ def scan_penny_recent_markets(
         },
         "summary": {
             "requested": args.market_count,
+            "candidate_checked": len(slugs),
             "found": len(events),
+            "skipped_closed": skipped_closed,
+            "skipped_non_neg_risk": skipped_non_neg_risk,
             "complete": len(complete),
             "positive": len(positive),
             "best_edge": None if best is None else best.get("edge"),
@@ -479,6 +515,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wallet", default=WALLET)
     parser.add_argument("--trade-limit", type=int, default=800)
     parser.add_argument("--market-count", type=int, default=20)
+    parser.add_argument("--candidate-market-count", type=int, default=100)
     parser.add_argument("--trigger-window-seconds", type=int, default=180)
     parser.add_argument("--trigger-threshold", type=int, default=10, help="trigger when BUY count is greater than this")
     parser.add_argument("--interval", type=float, default=5.0)

@@ -365,7 +365,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trigger-window-seconds", type=int, default=180)
     parser.add_argument("--trigger-threshold", type=int, default=10, help="trigger when BUY count is greater than this")
     parser.add_argument("--interval", type=float, default=5.0)
-    parser.add_argument("--port", type=int, default=5198)
+    parser.add_argument("--port", type=int, default=5298)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--workers", type=int, default=24)
     parser.add_argument("--gas-buffer", type=float, default=0.0)
@@ -397,5 +397,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 

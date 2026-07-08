@@ -39,13 +39,69 @@ DEFAULT_LOG_DIR = HERE / "penny_recent_edge_logs"
 DEFAULT_TOP_LOG = HERE / "penny_recent_20_edge_history.jsonl"
 
 
-edgeui.HTML = edgeui.HTML.replace(
-    "24h Volume Top 20 Neg-Risk Markets",
-    "p3nny Recent 20 Traded Neg-Risk Markets",
-).replace(
-    "Direct NO ask history; missing NO asks are ignored",
-    "Same table layout; target set is p3nny's latest traded events",
-)
+def customize_dashboard_html(html: str) -> str:
+    html = html.replace(
+        "24h Volume Top 20 Neg-Risk Markets",
+        "p3nny Recent 20 Traded Neg-Risk Markets",
+    ).replace(
+        "Direct NO ask history; missing NO asks are ignored",
+        "Same table layout; target set is p3nny's latest traded events",
+    )
+    html = html.replace(
+        """    <section>
+      <table>
+        <thead><tr><th>Leg</th><th>Effective NO</th><th>Size</th><th>Direct NO</th><th>YES bid</th><th>Fee</th><th>Route</th></tr></thead>
+        <tbody id=\"legs\"></tbody>
+      </table>
+    </section>
+""",
+        "",
+    )
+    html = html.replace(
+        """    function tsLabel(ts) { return (ts || '').replace('T', ' ').replace('+00:00', ' UTC'); }
+    function axisTimeLabel(ms) {
+      const d = new Date(ms);
+      const hh = String(d.getUTCHours()).padStart(2, '0');
+      const mm = String(d.getUTCMinutes()).padStart(2, '0');
+      return `${hh}:${mm} UTC`;
+    }
+""",
+        """    function pad2(x) { return String(x).padStart(2, '0'); }
+    function beijingDateFromTs(ts) {
+      if (!ts) return null;
+      const d = new Date(ts);
+      if (Number.isNaN(d.getTime())) return null;
+      return new Date(d.getTime() + 8 * 60 * 60 * 1000);
+    }
+    function tsLabel(ts) {
+      const d = beijingDateFromTs(ts);
+      if (!d) return '-';
+      return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())} 北京时间`;
+    }
+    function axisTimeLabel(ms) {
+      const d = new Date(ms + 8 * 60 * 60 * 1000);
+      return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} 北京`;
+    }
+""",
+    )
+    html = html.replace(
+        """        document.getElementById('legs').innerHTML = (latest.rows || []).map(r => `
+          <tr>
+            <td>${esc(r.title || '-')}</td>
+            <td>${fmt(r.effective_no, 4)}</td>
+            <td>${fmt(r.effective_size, 2)}</td>
+            <td>${fmt(r.direct_no_ask, 4)}</td>
+            <td>${fmt(r.yes_bid, 4)}</td>
+            <td>${fmt(r.fee, 6)}</td>
+            <td>${esc(r.source || '-')}</td>
+          </tr>`).join('');
+""",
+        "",
+    )
+    return html
+
+
+edgeui.HTML = customize_dashboard_html(edgeui.HTML)
 
 
 def utc_now() -> str:

@@ -6,7 +6,7 @@ It reuses the existing NO edge dashboard from arg_egy_exact_score_edge_monitor.p
 but changes the target selection:
   1. Pull p3nny/e46m3 latest trades.
   2. Monitor the latest N distinct neg-risk events he traded.
-  3. Draw the curve for the current best-edge event.
+  3. Draw the curve for the event p3nny bought most in recent trades.
   4. If p3nny has more than K BUY trades in one event within W seconds,
      switch the curve to that triggered event.
 
@@ -210,6 +210,16 @@ class Trigger:
     title: str
 
 
+@dataclass
+class BuyFocus:
+    event_slug: str
+    count: int
+    first_ts: int
+    last_ts: int
+    notional: float
+    title: str
+
+
 def find_buy_trigger(rows: list[dict[str, Any]], window_seconds: int, threshold: int) -> Trigger | None:
     cutoff = int(time.time()) - window_seconds
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -246,6 +256,36 @@ def find_buy_trigger(rows: list[dict[str, Any]], window_seconds: int, threshold:
     return triggers[0]
 
 
+def find_recent_buy_focus(rows: list[dict[str, Any]], eligible_slugs: set[str]) -> BuyFocus | None:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if str(row.get("side") or "").upper() != "BUY":
+            continue
+        slug = event_slug_from_trade(row)
+        if not slug or slug not in eligible_slugs:
+            continue
+        grouped[slug].append(row)
+
+    focuses: list[BuyFocus] = []
+    for slug, event_rows in grouped.items():
+        timestamps = [as_int(row.get("timestamp")) for row in event_rows]
+        notional = sum(as_float(row.get("price")) * as_float(row.get("size")) for row in event_rows)
+        focuses.append(
+            BuyFocus(
+                event_slug=slug,
+                count=len(event_rows),
+                first_ts=min(timestamps),
+                last_ts=max(timestamps),
+                notional=notional,
+                title=str(event_rows[0].get("title") or slug),
+            )
+        )
+    if not focuses:
+        return None
+    focuses.sort(key=lambda item: (item.count, item.notional, item.last_ts), reverse=True)
+    return focuses[0]
+
+
 def scan_penny_recent_markets(
     args: argparse.Namespace,
     trades: list[dict[str, Any]],
@@ -278,6 +318,8 @@ def scan_penny_recent_markets(
     complete = [row for row in rows if row.get("status") == "complete" and row.get("edge") is not None]
     positive = [row for row in complete if (row.get("edge") or 0.0) > 0]
     best = max(complete, key=lambda item: item.get("edge") or -999999.0) if complete else None
+    eligible_slugs = {str(row.get("slug") or "") for row in rows if usable_curve_row(row)}
+    buy_focus = find_recent_buy_focus(trades, eligible_slugs)
     trigger = find_buy_trigger(trades, args.trigger_window_seconds, args.trigger_threshold)
 
     return {
@@ -295,6 +337,16 @@ def scan_penny_recent_markets(
             "notional": trigger.notional,
             "title": trigger.title,
         },
+        "buy_focus": None
+        if buy_focus is None
+        else {
+            "event_slug": buy_focus.event_slug,
+            "count": buy_focus.count,
+            "first_ts": buy_focus.first_ts,
+            "last_ts": buy_focus.last_ts,
+            "notional": buy_focus.notional,
+            "title": buy_focus.title,
+        },
         "summary": {
             "requested": args.market_count,
             "found": len(events),
@@ -303,6 +355,8 @@ def scan_penny_recent_markets(
             "best_edge": None if best is None else best.get("edge"),
             "best_title": None if best is None else best.get("title"),
             "best_slug": None if best is None else best.get("slug"),
+            "buy_focus_slug": None if buy_focus is None else buy_focus.event_slug,
+            "buy_focus_count": None if buy_focus is None else buy_focus.count,
             "latest_trade_ts": max([as_int(row.get("timestamp")) for row in trades] or [0]),
         },
     }
@@ -324,6 +378,11 @@ def target_from_payload(payload: dict[str, Any], current_target: str | None) -> 
     trigger_slug = str(trigger.get("event_slug") or "")
     if trigger_slug and trigger_slug in row_slugs:
         return trigger_slug, f"p3nny trigger: {trigger.get('title') or trigger_slug}"
+
+    buy_focus = payload.get("buy_focus") or {}
+    buy_focus_slug = str(buy_focus.get("event_slug") or "")
+    if buy_focus_slug and buy_focus_slug in row_slugs:
+        return buy_focus_slug, f"p3nny most bought: {buy_focus.get('title') or buy_focus_slug}"
 
     if usable_rows:
         best = max(usable_rows, key=lambda item: item.get("edge") or -999999.0)
@@ -396,9 +455,11 @@ def monitor_loop(args: argparse.Namespace, state: edgeui.State) -> None:
 
             summary = payload.get("summary") or {}
             trigger = payload.get("trigger") or {}
+            buy_focus = payload.get("buy_focus") or {}
             print(
                 f"{payload.get('ts')} penny_recent rows={len(payload.get('rows') or [])} "
                 f"complete={summary.get('complete', 0)} best={summary.get('best_slug') or '-'} "
+                f"buy_focus={buy_focus.get('event_slug') or '-'} "
                 f"trigger={trigger.get('event_slug') or '-'} target={current_slug or '-'} "
                 f"elapsed={payload.get('elapsed_sec', 0.0):.2f}s",
                 flush=True,
